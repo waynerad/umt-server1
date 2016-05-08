@@ -54,7 +54,6 @@ func mainPage(w http.ResponseWriter, r *http.Request, op string, userid uint64) 
 	}
 	getform := r.Form
 	var paramsetid uint64
-	var name string
 	paramsetid = 0
 	_, ok := getform["paramset"]
 	if ok {
@@ -63,28 +62,6 @@ func mainPage(w http.ResponseWriter, r *http.Request, op string, userid uint64) 
 		if err != nil {
 			fmt.Fprintln(w, err)
 			return
-		}
-		// get the name
-		sql := "SELECT name FROM umt_paramset WHERE (id_paramset = ?);"
-		db, err := getDbConnection()
-		if err != nil {
-			fmt.Fprintln(w, `{ "success": false, "error": "Point 5196 `+dequote(err.Error())+`" }`)
-			return
-		}
-		defer db.Close()
-		sel, err := db.Prepare(sql)
-		if err != nil {
-			fmt.Println(w)
-			panic("Prepare failed")
-		}
-		sel.Bind(paramsetid)
-		rows, _, err := sel.Exec()
-		if err != nil {
-			fmt.Println(w)
-			panic("Exec failed")
-		}
-		for _, row := range rows {
-			name = row.Str(0)
 		}
 	}
 	// echo
@@ -246,20 +223,9 @@ function umtGetRando(seedNum) {
 // For all these "FM" building block functions, "revs" actually stands for "revolutions" -- i.e the number of times through the cycle
 // The integer part is the number of complete revolutions so far and the fractional part is how far into the current revolution we are
 
-function umtFMSine(revs, clipping) {
+function umtFMSine(revs) {
     "use strict";
-    var val;
-    if (clipping === 0) {
-        return Math.sin(gUmt.TAU * revs);
-    }    
-    val = Math.sin(gUmt.TAU * revs) * Math.exp(4.5 * clipping);
-    if (val > 1.0) {
-        return 1.0;
-    }
-    if (val < -1.0) {
-        return -1.0;
-    }
-    return val;
+    return Math.sin(gUmt.TAU * revs);
 }
 
 function umtFMSquare(revs) {
@@ -316,7 +282,7 @@ function umtFMSawtooth(revs) {
     return (revs - 0.5) * 2.0;
 }
 
-function umtGenerateANoteSineWave(frequency, duration, amplitude, clipping) {
+function umtGenerateANoteSineWave(frequency, duration, amplitude) {
     "use strict";
     // consult https://dvcs.w3.org/hg/audio/raw-file/tip/webaudio/specification.html
     var numSamples, theBuffer, bufData, i, fade, sampleRate;
@@ -326,7 +292,7 @@ function umtGenerateANoteSineWave(frequency, duration, amplitude, clipping) {
     bufData = theBuffer.getChannelData(0);
     for (i = 0; i < numSamples; i = i + 1) {
         fade = 1.0 - (i / numSamples);
-        bufData[i] = umtFMSine(i * (frequency / sampleRate), clipping) * (amplitude * fade);
+        bufData[i] = umtFMSine(i * (frequency / sampleRate)) * (amplitude * fade);
     }
     return theBuffer;
 }
@@ -649,16 +615,16 @@ function umtGenerateANoteFMSynthCrossNote(startMoment, frequency, duration, ampl
 function InstantiateTuningForkObj() {
     "use strict";
     this.getParams = function () {
-        return { percussion: false, parameters: [ { name: "clipping", display: "Clipping" } ] };
+        return { percussion: false, parameters: [] };
     };
     this.queUpANote = function (startMoment, frequency, duration, amplitude, instSpecificParams) {
-        var idxname, theBuffer, node, clipping;
-        clipping = instSpecificParams.clipping;
-        idxname = "sinewave" + frequency + "x" + duration + "x" + amplitude + "x" + clipping;
+        var idxname, theBuffer, node;
+        idxname = instSpecificParams; // delete me -- just to pass camelCaseJSLint
+        idxname = "sinewave" + frequency + "x" + duration + "x" + amplitude;
         if (gUmt.cachedNotes.hasOwnProperty(idxname)) {
             theBuffer = gUmt.cachedNotes[idxname];
         } else {
-            theBuffer = umtGenerateANoteSineWave(frequency, duration, amplitude, clipping);
+            theBuffer = umtGenerateANoteSineWave(frequency, duration, amplitude);
             gUmt.cachedNotes[idxname] = theBuffer;
         }
         node = gUmt.globalCtx.createBufferSource();
@@ -2346,53 +2312,6 @@ function umtCalculateMultiTabLoopLength(lpnum) {
     return total;
 }
 
-// qz
-
-function umtPlaybackFigureOutWhichTabWeAreOn(currentTime, numTabs, lpnum, loopLen) {
-    "use strict";
-    var floatLoopTabCycles, numLoopTabCycles, positionInLoop, tab, rv;
-    floatLoopTabCycles = currentTime / loopLen;
-    numLoopTabCycles = Math.floor(floatLoopTabCycles);
-    positionInLoop = currentTime - (numLoopTabCycles * loopLen);
-    rv = 0;
-    for (tab = 0; tab < numTabs; tab = tab + 1) {
-        if (gUmt.loop[lpnum].score.tabStartTimeOffsets[tab] <= positionInLoop) {
-            rv = tab;
-        }
-    }
-    return rv;
-}
-
-function umtPlaybackHighlightOneTab(tabToHighlight) {
-    "use strict";
-    var start, children, i, j;
-    start = jQuery(".ui-tabs-nav").get(0); // start is a <ul> tag
-    if (start.hasChildNodes()) {
-        // should always be true
-        children = start.childNodes; // children are <li> tags
-        j = 0; // count non-text nodes
-        for (i = 0; i < children.length; i = i + 1) {
-            if (children[i].nodeType === 1) {
-                if (j === tabToHighlight) {
-                    children[i].childNodes[0].style.backgroundColor = "#000000";
-                } else {
-                    children[i].childNodes[0].style.backgroundColor = "#FFFFFF";
-                }
-                j = j + 1;
-            }
-        }
-    }
-}
-
-function umtPlaybackHighlightPlayingTab(currentTime, numTabs, lpnum, loopLen) {
-    "use strict";
-    var tabToHighlight;
-    // Some rather hairy code here that depends on the internal structure of the Tab HTML generated by jQuery!
-    // If you ever upgrade the jQuery / jQuery UI used for this project, this code may break!
-    tabToHighlight = umtPlaybackFigureOutWhichTabWeAreOn(currentTime, numTabs, lpnum, loopLen);
-    umtPlaybackHighlightOneTab(tabToHighlight);
-}
-
 var umtExecReSeed;
 
 function umtSchedulePlayOfSegment() {
@@ -2428,8 +2347,6 @@ function umtSchedulePlayOfSegment() {
         if (gUmt.loop[lpnum].score.playAllTabs) {
             numTabs = gUmt.loop[lpnum].score.numTabs;
             loopLen = umtCalculateMultiTabLoopLength(lpnum); // qx tabLen * numTabs;
-// qz
-            umtPlaybackHighlightPlayingTab(currentTime, numTabs, lpnum, loopLen);
             for (tab = 0; tab < numTabs; tab = tab + 1) {
                 if (gUmt.loop[gUmt.currentlyPlayingLoop].score.songTab[tab].parts > 0) {
                     tabUnitLen = gUmt.loop[lpnum].score.songTab[tab].voice[0].nextStart; // a bit of a hack, grabbing the start position of the next note, were we to compose one
@@ -2924,7 +2841,6 @@ function umtExecAutomaticStop() {
     "use strict";
     console.log(gUmt);
     umtAutomaticStop();
-    umtPlaybackHighlightOneTab(-1);
 }
 
 function umtDisableUI() {
@@ -3030,7 +2946,7 @@ function umtExecSongNumberChange(event) {
 
 function umtUiCreateClosureFunctionsForSymmetrySlidersOutsideALoop(voiceNumber, patternSize) {
     "use strict";
-    jQuery("#slider_symmetry_transParam" + voiceNumber + "_" + patternSize).slider({min: 0, max: 100, step: 5, value: 0, orientation: "horizontal", change: function (event, ui) {
+    jQuery("#slider_symmetry_transParam" + voiceNumber + "_" + patternSize).slider({min: 0, max: 10, step: 1, value: 10, orientation: "horizontal", change: function (event, ui) {
         var tab, newvalue, patternDuration;
         tab = gUmt.UIParams.currentTab;
         // patternDuration and patternSize are two names for the same thing
@@ -3039,8 +2955,8 @@ function umtUiCreateClosureFunctionsForSymmetrySlidersOutsideALoop(voiceNumber, 
         patternDuration = patternSize;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
-                newvalue = ui.value / 100.0;
-                document.getElementById("display_symmetry_transParam" + voiceNumber + "_" + patternDuration).innerHTML = Math.round(newvalue * 100) + "%";
+                newvalue = ui.value / 10;
+                document.getElementById("display_symmetry_transParam" + voiceNumber + "_" + patternDuration).innerHTML = (newvalue * 100) + "%";
                 gUmt.UIParams.songTab[tab].voice[voiceNumber].symmetry[patternDuration].transParam = newvalue;
                 if (gUmt.UIParams.songTab[tab].voice[voiceNumber].playing) {
                     umtAutomaticallyRecomposeLoopFromUIParams();
@@ -3049,14 +2965,14 @@ function umtUiCreateClosureFunctionsForSymmetrySlidersOutsideALoop(voiceNumber, 
         }
     }
          });
-    jQuery("#slider_symmetry_scaleParam" + voiceNumber + "_" + patternSize).slider({min: 0, max: 240, step: 5, value: 120, orientation: "horizontal", change: function (event, ui) {
+    jQuery("#slider_symmetry_scaleParam" + voiceNumber + "_" + patternSize).slider({min: 0, max: 24, step: 1, value: 12, orientation: "horizontal", change: function (event, ui) {
         var tab, newvalue, patternDuration;
         tab = gUmt.UIParams.currentTab;
         patternDuration = patternSize;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
-                newvalue = (ui.value - 120.0) / 100.0;
-                document.getElementById("display_symmetry_scaleParam" + voiceNumber + "_" + patternDuration).innerHTML = Math.round(newvalue * 100) + "%";
+                newvalue = (ui.value - 12) / 10;
+                document.getElementById("display_symmetry_scaleParam" + voiceNumber + "_" + patternDuration).innerHTML = (newvalue * 100) + "%";
                 gUmt.UIParams.songTab[tab].voice[voiceNumber].symmetry[patternDuration].scaleParam = newvalue;
                 if (gUmt.UIParams.songTab[tab].voice[voiceNumber].playing) {
                     umtAutomaticallyRecomposeLoopFromUIParams();
@@ -3065,14 +2981,14 @@ function umtUiCreateClosureFunctionsForSymmetrySlidersOutsideALoop(voiceNumber, 
         }
     }
          });
-    jQuery("#slider_symmetry_tiltParam" + voiceNumber + "_" + patternSize).slider({min: 0, max: 240, step: 5, value: 120, orientation: "horizontal", change: function (event, ui) {
+    jQuery("#slider_symmetry_tiltParam" + voiceNumber + "_" + patternSize).slider({min: 0, max: 24, step: 1, value: 12, orientation: "horizontal", change: function (event, ui) {
         var tab, newvalue, patternDuration;
         tab = gUmt.UIParams.currentTab;
         patternDuration = patternSize;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
-                newvalue = (ui.value - 120.0) / 100.0;
-                document.getElementById("display_symmetry_tiltParam" + voiceNumber + "_" + patternDuration).innerHTML = Math.round(newvalue * 100) + "%";
+                newvalue = (ui.value - 12) / 10;
+                document.getElementById("display_symmetry_tiltParam" + voiceNumber + "_" + patternDuration).innerHTML = (newvalue * 100) + "%";
                 gUmt.UIParams.songTab[tab].voice[voiceNumber].symmetry[patternDuration].tiltParam = newvalue;
                 if (gUmt.UIParams.songTab[tab].voice[voiceNumber].playing) {
                     umtAutomaticallyRecomposeLoopFromUIParams();
@@ -3081,14 +2997,14 @@ function umtUiCreateClosureFunctionsForSymmetrySlidersOutsideALoop(voiceNumber, 
         }
     }
          });
-    jQuery("#slider_symmetry_scrollrhythmParam" + voiceNumber + "_" + patternSize).slider({min: 0, max: 100, step: 5, value: 0, orientation: "horizontal", change: function (event, ui) {
+    jQuery("#slider_symmetry_scrollrhythmParam" + voiceNumber + "_" + patternSize).slider({min: 0, max: 10, step: 1, value: 10, orientation: "horizontal", change: function (event, ui) {
         var tab, newvalue, patternDuration;
         tab = gUmt.UIParams.currentTab;
         patternDuration = patternSize;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
-                newvalue = ui.value / 100.0;
-                document.getElementById("display_symmetry_scrollrhythmParam" + voiceNumber + "_" + patternDuration).innerHTML = Math.round(newvalue * 100) + "%";
+                newvalue = ui.value / 10;
+                document.getElementById("display_symmetry_scrollrhythmParam" + voiceNumber + "_" + patternDuration).innerHTML = (newvalue * 100) + "%";
                 gUmt.UIParams.songTab[tab].voice[voiceNumber].symmetry[patternDuration].scrollrhythmParam = newvalue;
                 if (gUmt.UIParams.songTab[tab].voice[voiceNumber].playing) {
                     umtAutomaticallyRecomposeLoopFromUIParams();
@@ -3097,14 +3013,14 @@ function umtUiCreateClosureFunctionsForSymmetrySlidersOutsideALoop(voiceNumber, 
         }
     }
          });
-    jQuery("#slider_symmetry_scrollpitchParam" + voiceNumber + "_" + patternSize).slider({min: 0, max: 100, step: 5, value: 0, orientation: "horizontal", change: function (event, ui) {
+    jQuery("#slider_symmetry_scrollpitchParam" + voiceNumber + "_" + patternSize).slider({min: 0, max: 10, step: 1, value: 10, orientation: "horizontal", change: function (event, ui) {
         var tab, newvalue, patternDuration;
         tab = gUmt.UIParams.currentTab;
         patternDuration = patternSize;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
-                newvalue = ui.value / 100.0;
-                document.getElementById("display_symmetry_scrollpitchParam" + voiceNumber + "_" + patternDuration).innerHTML = Math.round(newvalue * 100) + "%";
+                newvalue = ui.value / 10;
+                document.getElementById("display_symmetry_scrollpitchParam" + voiceNumber + "_" + patternDuration).innerHTML = (newvalue * 100) + "%";
                 gUmt.UIParams.songTab[tab].voice[voiceNumber].symmetry[patternDuration].scrollpitchParam = newvalue;
                 if (gUmt.UIParams.songTab[tab].voice[voiceNumber].playing) {
                     umtAutomaticallyRecomposeLoopFromUIParams();
@@ -3113,14 +3029,14 @@ function umtUiCreateClosureFunctionsForSymmetrySlidersOutsideALoop(voiceNumber, 
         }
     }
          });
-    jQuery("#slider_symmetry_scrollbothParam" + voiceNumber + "_" + patternSize).slider({min: 0, max: 100, step: 5, value: 0, orientation: "horizontal", change: function (event, ui) {
+    jQuery("#slider_symmetry_scrollbothParam" + voiceNumber + "_" + patternSize).slider({min: 0, max: 10, step: 1, value: 10, orientation: "horizontal", change: function (event, ui) {
         var tab, newvalue, patternDuration;
         tab = gUmt.UIParams.currentTab;
         patternDuration = patternSize;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
-                newvalue = ui.value / 100.0;
-                document.getElementById("display_symmetry_scrollbothParam" + voiceNumber + "_" + patternDuration).innerHTML = Math.round(newvalue * 100) + "%";
+                newvalue = ui.value / 10;
+                document.getElementById("display_symmetry_scrollbothParam" + voiceNumber + "_" + patternDuration).innerHTML = (newvalue * 100) + "%";
                 gUmt.UIParams.songTab[tab].voice[voiceNumber].symmetry[patternDuration].scrollbothParam = newvalue;
                 if (gUmt.UIParams.songTab[tab].voice[voiceNumber].playing) {
                     umtAutomaticallyRecomposeLoopFromUIParams();
@@ -3240,33 +3156,33 @@ function umtUiSetSymmetryListboxAndSlider(row, patternDuration) {
     document.getElementById("sel_symmetry" + suffix).value = gUmt.UIParams.songTab[tab].voice[row].symmetry[patternDuration].pattern;
     // trans param
     absvalue = gUmt.UIParams.songTab[tab].voice[row].symmetry[patternDuration].transParam;
-    slidervalue = Math.floor(absvalue * 100);
-    document.getElementById("display_symmetry_transParam" + suffix).innerHTML = Math.round(absvalue * 100) + "%";
+    slidervalue = absvalue * 10;
+    document.getElementById("display_symmetry_transParam" + suffix).innerHTML = (absvalue * 100) + "%";
     jQuery("#slider_symmetry_transParam" + suffix).slider({ value: slidervalue });
     // scale param
     absvalue = gUmt.UIParams.songTab[tab].voice[row].symmetry[patternDuration].scaleParam;
-    slidervalue = Math.floor((absvalue + 1.0) * 100);
-    document.getElementById("display_symmetry_scaleParam" + suffix).innerHTML = Math.round(absvalue * 100) + "%";
+    slidervalue = (absvalue * 10) + 12;
+    document.getElementById("display_symmetry_scaleParam" + suffix).innerHTML = (absvalue * 100) + "%";
     jQuery("#slider_symmetry_scaleParam" + suffix).slider({ value: slidervalue });
     // tilt param
     absvalue = gUmt.UIParams.songTab[tab].voice[row].symmetry[patternDuration].tiltParam;
-    slidervalue = Math.floor((absvalue + 1.0) * 100);
-    document.getElementById("display_symmetry_tiltParam" + suffix).innerHTML = Math.round(absvalue * 100) + "%";
+    slidervalue = (absvalue * 10) + 12;
+    document.getElementById("display_symmetry_tiltParam" + suffix).innerHTML = (absvalue * 100) + "%";
     jQuery("#slider_symmetry_tiltParam" + suffix).slider({ value: slidervalue });
     // scrollrhythm param
     absvalue = gUmt.UIParams.songTab[tab].voice[row].symmetry[patternDuration].scrollrhythmParam;
-    slidervalue = absvalue * 100;
-    document.getElementById("display_symmetry_scrollrhythmParam" + suffix).innerHTML = Math.round(absvalue * 100) + "%";
+    slidervalue = absvalue * 10;
+    document.getElementById("display_symmetry_scrollrhythmParam" + suffix).innerHTML = (absvalue * 100) + "%";
     jQuery("#slider_symmetry_scrollrhythmParam" + suffix).slider({ value: slidervalue });
     // scrollpitch param
     absvalue = gUmt.UIParams.songTab[tab].voice[row].symmetry[patternDuration].scrollpitchParam;
-    slidervalue = absvalue * 100;
-    document.getElementById("display_symmetry_scrollpitchParam" + suffix).innerHTML = Math.round(absvalue * 100) + "%";
+    slidervalue = absvalue * 10;
+    document.getElementById("display_symmetry_scrollpitchParam" + suffix).innerHTML = (absvalue * 100) + "%";
     jQuery("#slider_symmetry_scrollpitchParam" + suffix).slider({ value: slidervalue });
     // scrollboth param
     absvalue = gUmt.UIParams.songTab[tab].voice[row].symmetry[patternDuration].scrollbothParam;
-    slidervalue = absvalue * 100;
-    document.getElementById("display_symmetry_scrollbothParam" + suffix).innerHTML = Math.round(absvalue * 100) + "%";
+    slidervalue = absvalue * 10;
+    document.getElementById("display_symmetry_scrollbothParam" + suffix).innerHTML = (absvalue * 100) + "%";
     jQuery("#slider_symmetry_scrollbothParam" + suffix).slider({ value: slidervalue });
 }
 
@@ -3498,15 +3414,15 @@ function umtUiSetDefaultInstSpecificParamsForNewInstrument(voiceNumber, instrume
 
 function umtUiCreateClosureFunctionsForInstrumentSpecificParametersOutsideALoop(instrumentName, paramName, voiceNumber) {
     "use strict";
-    jQuery("#slider_instr_" + instrumentName + "_" + paramName + "_" + voiceNumber + "_patterns").slider({min: 0, max: 100, step: 5, value: 0, orientation: "vertical", change: function (event, ui) {
+    jQuery("#slider_instr_" + instrumentName + "_" + paramName + "_" + voiceNumber + "_patterns").slider({min: 0, max: 10, step: 1, value: 0, orientation: "vertical", change: function (event, ui) {
         var tab, newvalue, absvalue, aspercentage;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
                 tab = gUmt.UIParams.currentTab;
                 newvalue = ui.value;
-                absvalue = newvalue / 100.0;
-                aspercentage = newvalue;
-                document.getElementById("display_instr_" + instrumentName + "_" + paramName + "_" + voiceNumber + "_patterns").innerHTML = Math.round(aspercentage) + "%";
+                absvalue = newvalue / 10;
+                aspercentage = newvalue * 10;
+                document.getElementById("display_instr_" + instrumentName + "_" + paramName + "_" + voiceNumber + "_patterns").innerHTML = aspercentage + "%";
                 gUmt.UIParams.songTab[tab].voice[voiceNumber].instSpecificParams[instrumentName + "_" + paramName + "_patterns"] = absvalue;
                 if (gUmt.UIParams.songTab[tab].voice[voiceNumber].playing) {
                     umtAutomaticallyRecomposeLoopFromUIParams();
@@ -3575,8 +3491,8 @@ function umtUiSetInstrumentSpecificSliders(voiceNumber) {
             instParamSet = instParameters[instParamIdx];
             paramName = instParamSet.name;
             absvalue = gUmt.UIParams.songTab[tab].voice[voiceNumber].instSpecificParams[instrumentName + "_" + paramName + "_patterns"];
-            slidervalue = absvalue * 100;
-            document.getElementById("display_instr_" + instrumentName + "_" + paramName + "_" + voiceNumber + "_patterns").innerHTML = Math.round(absvalue * 100) + "%";
+            slidervalue = absvalue * 10;
+            document.getElementById("display_instr_" + instrumentName + "_" + paramName + "_" + voiceNumber + "_patterns").innerHTML = (absvalue * 100) + "%";
             jQuery("#slider_instr_" + instrumentName + "_" + paramName + "_" + voiceNumber + "_patterns").slider({ value: slidervalue });
         }
     }
@@ -3826,15 +3742,15 @@ function umtUiAddRow(voiceNumber) {
     listenElement = document.getElementById("songnumber" + voiceNumber);
     listenElement.addEventListener("change", umtExecSongNumberChange, true);
     // Volume
-    jQuery("#slider_volume" + voiceNumber).slider({min: 0, max: 100, step: 5, value: 0, orientation: "vertical", change: function (event, ui) {
+    jQuery("#slider_volume" + voiceNumber).slider({min: 0, max: 10, step: 1, value: 5, orientation: "vertical", change: function (event, ui) {
         var tab, newvalue, absvalue, aspercentage;
         tab = gUmt.UIParams.currentTab;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
                 newvalue = ui.value;
-                absvalue = newvalue / 100.0;
-                aspercentage = newvalue;
-                document.getElementById("display_volume" + voiceNumber).innerHTML = Math.round(aspercentage) + "%";
+                absvalue = newvalue / 10;
+                aspercentage = newvalue * 10;
+                document.getElementById("display_volume" + voiceNumber).innerHTML = aspercentage + "%";
                 gUmt.UIParams.songTab[tab].voice[voiceNumber].volume = absvalue;
                 if (gUmt.UIParams.songTab[tab].voice[voiceNumber].playing) {
                     umtAutomaticallyRecomposeLoopFromUIParams();
@@ -3860,15 +3776,15 @@ function umtUiAddRow(voiceNumber) {
     }
          });
     // Note distance
-    jQuery("#slider_notedistance" + voiceNumber).slider({min: 0, max: 100, step: 5, value: 0, orientation: "vertical", change: function (event, ui) {
+    jQuery("#slider_notedistance" + voiceNumber).slider({min: 0, max: 10, step: 1, value: 5, orientation: "vertical", change: function (event, ui) {
         var tab, newvalue, absvalue, aspercentage;
         tab = gUmt.UIParams.currentTab;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
                 newvalue = ui.value;
-                absvalue = newvalue / 100.0;
-                aspercentage = newvalue;
-                document.getElementById("display_notedistance" + voiceNumber).innerHTML = Math.round(aspercentage) + "%";
+                absvalue = newvalue / 10;
+                aspercentage = newvalue * 10;
+                document.getElementById("display_notedistance" + voiceNumber).innerHTML = aspercentage + "%";
                 gUmt.UIParams.songTab[tab].voice[voiceNumber].noteDistance = absvalue;
                 if (gUmt.UIParams.songTab[tab].voice[voiceNumber].playing) {
                     umtAutomaticallyRecomposeLoopFromUIParams();
@@ -3878,15 +3794,15 @@ function umtUiAddRow(voiceNumber) {
     }
          });
     // Restyness
-    jQuery("#slider_restyness" + voiceNumber).slider({min: 0, max: 100, step: 5, value: 0, orientation: "vertical", change: function (event, ui) {
+    jQuery("#slider_restyness" + voiceNumber).slider({min: 0, max: 10, step: 1, value: 0, orientation: "vertical", change: function (event, ui) {
         var tab, newvalue, absvalue, aspercentage;
         tab = gUmt.UIParams.currentTab;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
                 newvalue = ui.value;
-                absvalue = newvalue / 100.0;
-                aspercentage = newvalue;
-                document.getElementById("display_restyness" + voiceNumber).innerHTML = Math.round(aspercentage) + "%";
+                absvalue = newvalue / 10;
+                aspercentage = newvalue * 10;
+                document.getElementById("display_restyness" + voiceNumber).innerHTML = aspercentage + "%";
                 gUmt.UIParams.songTab[tab].voice[voiceNumber].restyness = absvalue;
                 if (gUmt.UIParams.songTab[tab].voice[voiceNumber].playing) {
                     umtAutomaticallyRecomposeLoopFromUIParams();
@@ -3896,15 +3812,15 @@ function umtUiAddRow(voiceNumber) {
     }
          });
     // Amplitude variation
-    jQuery("#slider_ampvariation" + voiceNumber).slider({min: 0, max: 100, step: 5, value: 0, orientation: "vertical", change: function (event, ui) {
+    jQuery("#slider_ampvariation" + voiceNumber).slider({min: 0, max: 10, step: 1, value: 0, orientation: "vertical", change: function (event, ui) {
         var tab, newvalue, absvalue, aspercentage;
         tab = gUmt.UIParams.currentTab;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
                 newvalue = ui.value;
-                absvalue = newvalue / 100.0;
-                aspercentage = newvalue;
-                document.getElementById("display_ampvariation" + voiceNumber).innerHTML = Math.round(aspercentage) + "%";
+                absvalue = newvalue / 10;
+                aspercentage = newvalue * 10;
+                document.getElementById("display_ampvariation" + voiceNumber).innerHTML = aspercentage + "%";
                 gUmt.UIParams.songTab[tab].voice[voiceNumber].ampVariation = absvalue;
                 if (gUmt.UIParams.songTab[tab].voice[voiceNumber].playing) {
                     umtAutomaticallyRecomposeLoopFromUIParams();
@@ -3914,15 +3830,15 @@ function umtUiAddRow(voiceNumber) {
     }
          });
     // Skew
-    jQuery("#slider_skew" + voiceNumber).slider({min: 0, max: 100, step: 5, value: 0, orientation: "vertical", change: function (event, ui) {
+    jQuery("#slider_skew" + voiceNumber).slider({min: 0, max: 10, step: 1, value: 0, orientation: "vertical", change: function (event, ui) {
         var tab, newvalue, absvalue, aspercentage;
         tab = gUmt.UIParams.currentTab;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
                 newvalue = ui.value;
-                absvalue = newvalue / 100.0;
-                aspercentage = newvalue;
-                document.getElementById("display_skew" + voiceNumber).innerHTML = Math.round(aspercentage) + "%";
+                absvalue = newvalue / 10;
+                aspercentage = newvalue * 10;
+                document.getElementById("display_skew" + voiceNumber).innerHTML = aspercentage + "%";
                 gUmt.UIParams.songTab[tab].voice[voiceNumber].skew = absvalue;
                 if (gUmt.UIParams.songTab[tab].voice[voiceNumber].playing) {
                     umtAutomaticallyRecomposeLoopFromUIParams();
@@ -4169,7 +4085,6 @@ function umtUiCopyUiParamsToActualUi() {
     umtUiSetTimeDivisionListboxes();
     // current tab
     tab = gUmt.UIParams.currentTab;
-    jQuery("#tabs").tabs("option", "active", tab);
     // scale
     umtUiSetListboxByValue(document.getElementById("lb_scale"), gUmt.UIParams.songTab[tab].scale);
     // chords
@@ -4177,7 +4092,7 @@ function umtUiCopyUiParamsToActualUi() {
     // center note
     absvalue = gUmt.UIParams.songTab[tab].centernote;
     document.getElementById("display_centernote_value").innerHTML = absvalue;
-    slidervalue = (Math.log(absvalue / gUmt.calibration) / Math.log(4 / 3)) + 5.0;
+    slidervalue = (Math.log(absvalue / gUmt.calibration) / Math.log(1.25)) + 5.0;
     slidervalue = Math.floor(slidervalue + 0.1); // in case of rounding error on the logarithm
     jQuery("#slider_centernote").slider({ value: slidervalue });
     // tempo
@@ -4212,7 +4127,7 @@ function umtUiCopyUiParamsToActualUi() {
         // volume
         absvalue = gUmt.UIParams.songTab[tab].voice[vcnum].volume;
         document.getElementById("display_volume" + vcnum).innerHTML = (absvalue * 100) + "%";
-        slidervalue = Math.floor(absvalue * 100);
+        slidervalue = absvalue * 10;
         jQuery("#slider_volume" + vcnum).slider({ value: slidervalue });
         // octave
         absvalue = gUmt.UIParams.songTab[tab].voice[vcnum].octave;
@@ -4222,22 +4137,22 @@ function umtUiCopyUiParamsToActualUi() {
         // note distance
         absvalue = gUmt.UIParams.songTab[tab].voice[vcnum].noteDistance;
         document.getElementById("display_notedistance" + vcnum).innerHTML = (absvalue * 100) + "%";
-        slidervalue = Math.floor(absvalue * 100);
+        slidervalue = absvalue * 10;
         jQuery("#slider_notedistance" + vcnum).slider({ value: slidervalue });
         // restyness
         absvalue = gUmt.UIParams.songTab[tab].voice[vcnum].restyness;
         document.getElementById("display_restyness" + vcnum).innerHTML = (absvalue * 100) + "%";
-        slidervalue = Math.floor(absvalue * 100);
+        slidervalue = absvalue * 10;
         jQuery("#slider_restyness" + vcnum).slider({ value: slidervalue });
         // amplitude variation
         absvalue = gUmt.UIParams.songTab[tab].voice[vcnum].ampVariation;
         document.getElementById("display_ampvariation" + vcnum).innerHTML = (absvalue * 100) + "%";
-        slidervalue = Math.floor(absvalue * 100);
+        slidervalue = absvalue * 10;
         jQuery("#slider_ampvariation" + vcnum).slider({ value: slidervalue });
         // skew
         absvalue = gUmt.UIParams.songTab[tab].voice[vcnum].skew;
         document.getElementById("display_skew" + vcnum).innerHTML = (absvalue * 100) + "%";
-        slidervalue = Math.floor(absvalue * 100);
+        slidervalue = absvalue * 10;
         jQuery("#slider_skew" + vcnum).slider({ value: slidervalue });
         // min note
         timeDivCount = umtUiGetTimeDivisionCount();
@@ -4585,7 +4500,6 @@ function umtUiHiddenCopyBetweenTabs() {
 function umtExecLoopTabsOne() {
     "use strict";
     gUmt.UIParams.playAllTabs = false;
-    umtPlaybackHighlightOneTab(-1);
     umtAutomaticallyRecomposeLoopFromUIParams();
 }
 
@@ -4690,13 +4604,13 @@ function umtLoadParamset(paramsetid) {
             console.log("textStatus", textStatus);
             console.log("jqXHR", jqXHR);
             gUmt.UIParams = data.uiparams;
+            umtUiCopyUiParamsToActualUi();
             numTabs = gUmt.UIParams.numTabs;
             cx("numTabs = " + ctstr(numTabs));
             for (tab = 1; tab < numTabs; tab = tab + 1) {
                 cx("tab " + ctstr(tab));
                 addTab2();
             }
-            umtUiCopyUiParamsToActualUi();
         }
     });
 }
@@ -4777,7 +4691,7 @@ jQuery(function () {
         }
     }
          });
-    jQuery("#slider_mastervol").slider({min: 0, max: 100, step: 5, value: 90, orientation: "horizontal", change: function (event, ui) {
+    jQuery("#slider_mastervol").slider({min: 0, max: 100, step: 10, value: 90, orientation: "horizontal", change: function (event, ui) {
         var newvalue;
         if (gUmt.noReenterAddingVoice === false) {
             if (event.type === "slidechange") {
@@ -4962,8 +4876,6 @@ jQuery(function () {
     &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Save as: <input type="text" id="save_name" name="save_name" value="`)
 	if userid == 0 {
 		fmt.Fprintln(w, "You cannot save because you are not logged in")
-	} else {
-		fmt.Fprintln(w, name)
 	}
 	fmt.Fprintln(w, `" /> <input type="button" id="save_as" value="Save As" />
 
@@ -5468,7 +5380,7 @@ func list(w http.ResponseWriter, r *http.Request, op string, userid uint64) {
 <html>
 <head>
 <meta charset=utf-8 />
-<title>Ultimate Music Toy Song List</title>
+<title>Musicy Music Maker Song List</title>
 </head>
 <body>
 `)
